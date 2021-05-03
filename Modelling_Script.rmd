@@ -1,0 +1,722 @@
+---
+title: "Application de la régression linéaire multiple à des données financières macro-industrielles chinoises "
+output: 
+    pdf_document:
+      latex_engine: lualatex
+      toc: true
+      toc_depth: 6
+      df_print: kable  #default tibble
+      fig_caption: yes  
+      number_sections: true  
+toc-title: "Sommaire"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message=FALSE)
+
+```
+
+```{r pakages }
+library(knitr)
+library(magrittr)    # pour l'opérateur pipe %>%
+library(kableExtra)  # pour l'affichage des tables
+library(car)         # pour la mesure du VIF
+library(GGally)      # pour les matrices de corrélations
+library(ggplot2)
+library(dplyr)       # pour la fonction select_if
+library(corpcor)     # pour les corrélations partielles
+```
+
+\pagebreak
+\  
+\  
+\  
+
+L’objectif de ce document est de présenter la mise en œuvre, sous R, d’une regression linéaire multiple appliquée à des données financières macro-industrielles chinoises. L'étude présentée ici n'est toutefois pas complète, dans la mesure ou l'objectif qui est celui d'aboutir à un modèle LINEAIRE exploitable pour l'explication et la prédiction de la variable dépendente, n'a pas atteint. Ce document se veut donc etre une description des opérations entreprises pour tenter d'aboutir à un tel modèle.
+
+----------------------------------------------------------
+
+# Description des données traitées
+
+Les données sont issues des rapports du Bureau national des statistiques de Chine (NBSC) contenant des mesures de huit indicateurs macro-industriels sur la période 1998-2017, utiles pour dresser un aperçu de la croissance économique du pays. Elles ont été récupérées sur la plateforme Kaggle ([lien vers le jeu de données sur Kaggle](https://www.kaggle.com/sudheepiyer/chinese-macroindustrial-finance-data) ).
+
+Le jeu de données originel croise en colonnes 9 variables et en lignes 218 observations, toutefois celui-ci contient des données manquantes (NA), particulièrement pour les mesures entre 1998 et 2000, les observations correspondantes ont donc été omises. Dans ce qui suit, le jeu de données traité est donc de taille de taille 157 x 9. 
+
+
+```{r donnees}
+donneesBrutes <- read.csv(".\\Chinese Macro-Industrial finance data.csv", stringsAsFactors = FALSE, header = TRUE)
+#dim(donneesBrutes)
+#View(donneesBrutes)
+#summary(donnees)
+#names(donnees)
+
+kable(donneesBrutes[1:8,1:9], caption='Jeu de données Chinese Macro-industrial finace (les 8 premières observations)') %>%
+kable_styling(font_size = 9,full_width = T, latex_options=c("hold_position"))
+donnees <- na.omit(donneesBrutes)
+# View(donnees)
+```
+
+
+
+## Description des variables
+
+
+```{r descrip}
+
+description <- c("Date de l'observation","Les coûts financiers","Bénéfices totaux","La production d'énergie","Stocks","Actif total","Frais d'intérêt","Dépenses administratives","Frais de vente")
+descrip <- cbind(colnames(donnees),description)
+colnames(descrip) <- c("Variable","Description")
+kable(descrip, caption=" Description des variables du jeu de données") %>%
+kable_styling(latex_options=c("hold_position"))
+donnees <- donnees[,-1]
+```
+
+
+
+
+Dans ce travail de modélisation, la variable "Date" n'est pas prise en compte, la variable expliquée est "Financial.Costs..Accumulated.Value", et ce, dans la perspective d'une part d'expliquer les facteurs qui participent aux coûts financiers afin les controler de sorte à minimser ces couts et d'autre part de disposer d'un modèle qui permette de les prédire (les couts financiers) pour anticiper les dépenses. Toutes les autres variables sont initialement prises comme variables explicatives.
+
+
+
+## Analyses préliminaires (Corrélations et distributions des variables) 
+
+**Coefficients de corrélation entre le variables**
+
+```{r cor}
+cor(donnees)          # coefficients de corrélations
+```
+
+**Corrélogramme des variables**
+
+```{r corrMat, fig.width=60, fig.height=50}
+ggpairs(select_if(donnees,is.numeric), title="correlogramme des variables numériques",axisLabels="none", progress=FALSE)
+                     # matrice des corrélations et densités
+
+```
+
+
+
+# Mise en œuvre de la régression linéaire multiple 
+
+L'éstimation d'un modèle de régression linéaire multiple dans ce qui suit, a été faite selon le processus suivant:  L'éstimation d'un premier modèle prenant en compte toutes les sept variables explicatives, l'élimination des variables non significatives, la vérification du fait que le modèle, ainsi obtenu, est bien le meme que celui retourné par la fonction step ( qui automatise l'approche descendente d'élimination de variables selon leur significativité et selon l'AIC).Nous considérons celui-ci comme un modèle de base que nous cherchons à améliorer. Dans cette perspective, d'autres modèles sont estimés, cette fois en incluant ou non des variables sur base de leurs corrélations avec la variable expliquée et sur base du VIF. Nous confirmons finalement que le modèle de base est relativement le meilleur.
+
+Sous R, les coefficients sont par défaut estimés par la méthode des moindres carrés.
+
+
+
+## Premier modèle
+
+```{r model1}
+lm1=lm(formula=Financial.Costs..Accumulated.Value~.,data=donnees)
+s1 <- summary(lm1)
+s1
+extractAIC(lm1)
+
+#non.signif <- rownames(s1$coeff)[s1$coeff[-1,4] > 0.1]
+```
+
+
+### Lecture des résultats
+
+La première ligne rappelle le modèle estimé.  
+La section "residuals" donne les quartiles de la variable des résidus. 
+La section "Coefficients" retourne :
+
+- les coefficients estimés (Estimate)
+- l'écart type de l'erreur d'estimation du coefficient (Std.Error)
+- la valeur de la statistique du test de significativité du coefficient. 
+- la p-valeur de ce test notée Pr(>|t|) qui est la probabilité d'obtenir une t-valeur aussi élevée ou supérieure à celle observée (t-value) sous H0 par le seul effet du hasard.
+- des étoiles de significativité dont l'interprétation est donnée dans la ligne d'après.
+
+
+#### Test de significativité des coefficients
+
+Le test de significativité des coefficients teste l'hypothèse H0: "Le coefficient est nul" contre H1:" Le coefficient est non nul".
+
+Les résultats de ce test peuvent être lus de trois manières:
+
+
+**Avec la statistique du test :**
+
+La valeur de la statistique du test de significativité des coefficients peut être lue de la colonne t value.
+Il s'agit, pour interpréter le résultat, de comparer cette valeur à la valeur critique de la loi de Student (tabulée) à (nb.obsv - nb.variables - 1 ) degrés de liberté et au seuil choisi.
+
+**Avec la p-valeur du test :**
+
+Nous usons ici des p-valeur du test pour en interpréter les résultats.
+Mis à part ceux des variables "Total.Assets..Accumulated.Value" et "Administrative.Expenses..Accumulated.Value" , tous les coefficients ont des p-valeur du test inférieures à 0.05, l'hypothèse Nulle dans ce cas est rejetée et les coefficients sont considérés comme non nuls et donc les variables associées significatives. 
+Les p-valeur du test de significativité des coefficients des variables "Total.Assets..Accumulated.Value" et "Administrative.Expenses..Accumulated.Value" sont supérieures à 0.1, le résultat du test n'est donc pas statistiquement significatif, l'on ne peut dans ce cas rejeter H0, et concluons donc que ces variables ne sont pas significatives, i.e, ne contribuent probablement pas à l'explication des coûts financiers.
+
+**Avec les étoiles de significativité **
+
+L'on peut arriver aux mêmes conclusions plus simplement en se fiant aux étoiles de significativité : les variables associées aux coefficients marqués par "\*\*\*" sont significatives à un seuil de 0.1% ,celles associées à ceux marqués par "\*\*"le sont à un seuil de 1%,celles associées à ceux marqués par "\*" le sont à un seuil de 5%, celles associées à ceux marqués par "\." le sont à un seuil de 10% et enfin celles associées à ceux marqués par un " " (vide) ne sont pas significatives.
+ 
+<!-- le coefficient associé à une variable > 0 ==> plus la valeur de cette variable est elevée plus celle de la variable expliquée l'est. -->
+<!-- le coefficient associé à une variable < 0 ==> plus la valeur de cette variable est elevée plus celle de la variable expliquée baisse. -->
+
+#### Test de significativité globale du modèle
+
+Les trois dernières lignes indiquent dans l'ordre :
+
+- la racine de la moyenne des erreurs au carré.( l'écart-type des erreurs, ayant divisé sur nb.obsv-nb.variables -1)
+- le nombre de degrés de libértés, tel que Nb DDL = Nb Observations - Nb variables explicatives - 1 = 157 - 7 -1 = 149.
+- la valeur du coefficient de détérmination R2 qui est une mesure du pouvoir prédictif du modèle.
+- la valeur du coefficient de détérmination ajusté (qui prend en considération le nombre de degrés de liberté du modèle et qui est plus fiable que R2, ce dernier augmentant dans tout les cas (meme en ajoutant au modèle des variables non significaives))
+- la valeur de la statistique de Fisher du test de la significativité globale du modèle.
+- le nombre de variables explicatives et, une fois de plus, de degrès de libérté.
+- la p-valeur du test de Fisher de sgnificativité globale du modèle.
+
+La valeur du critère d'information d'Akaiké (AIC) est aussi affichée. Celle-ci permet de mesurer la qualité d'un modèle (par rapport à un autre).
+
+Nous lisons pour ce modèle un R2 ajusté de 99.92 %, ce qui signifierait que le modèle explique 99% de la variabilité du coût financier; ce qui est une valeur très élevée, toutefois, une valeur élevée du coefficient de détermination ne signifie pas toujours une bonne qualité du modèle mais peut signifier un modèle bruité( qui inclurait des variables qui n'expliquent pas forcément la variable dépendante).
+Aussi, la p-valeur du modèle est inférieure à 2.2e-16 ce qui indique qu'on ne peut accepter l'hypothèse H0 du test de Fisher selon laquelle "tous les coefficients du modèle seraient nuls", le modèle est donc globalement significatif (contient au moins un coefficient significativement différent de zéro).
+
+----------------------------------------------
+
+
+## Elimination des variables non signficatives
+
+Dans ce qui suit nous procédons à l'élimination des variables non significatives, une à une, et réestimons le modèle après chaque élimination.
+
+
+```{r model2}
+#non.signif.form <- paste0("-",paste(non.signif[-1],collapse = "-"))
+
+lm2<- update(lm1,.~.-Administrative.Expenses..Accumulated.Value)
+s2 <- summary(lm2)
+s2
+extractAIC(lm2)
+
+```
+
+On constate que l'AIC a diminué. L'erreur moyenne du modèle a légèrement augmenté sans que ceci soit significatif.
+On constate par ailleurs que la p-valeur de la variable "Total.Assets..Accumulated.Value" a diminué, la rendant désormais significative si l'on se fixe un seuil de 10 %, nous ne la supprimons donc pas du modèle.
+Pour confirmer la décision d'arrêter le processus descendant d'élimination des variables nous estimons le modèle avec la fonction "step", qui automatise ce processus [^1].
+
+
+## Modèle éstimé par la fonction "step"
+
+Le modèle, ci-dessous, retourné par la fonction "step" est bien le même que celui obtenu précédemment (modèle sans la variable " Administrative.Expenses..Accumulated.Value"). Nous considérons ce modèle comme modèle de base et essaierons dans ce qui suit d'en trouver d'autres meilleurs.
+
+```{r descAuto}
+
+lmStep<- step(lm(Financial.Costs..Accumulated.Value~.,donnees), direction="backward",trace=0)
+summary(lmStep)
+extractAIC(lmStep)
+vif(lmStep)
+```
+
+[^1]: Ceci n'est pas prétendu être une étape de la pratique de la régression linéaire et a été fait uniquement par manque de certitude quant à la décision d'arrêt du processus descendent ( le choix du seuil de significativité étant arbitraire ). Et toujours dans cette optique de vérification, un modèle a été estimé en poursuivant le processus descendent et en supprimant la variable "Total.Assets..Accumulated.Value" et a été, en effet, trouvé d'un AIC supérieur au modèle de base.
+
+## Modèle sans les variables les moins corrélées avec la variable expliquée
+
+Nous avons, au début de cette étude, visualisé les corrélations entre les variables mais ne les avons jusque-là pas utilisées.
+Les variables non corrélées avec la variable expliquée peuvent être éliminées dès le début. Dans notre cas, en se référant au coefficient de corrélation de Pearson, toutes les variables sont linéairement fortement corrélées avec la variable expliquée. Nous nous proposons de visualiser les coefficients de corrélations partielles pour évaluer la corrélation entre une variable explicative et la variable expliquée en faisant abstraction de l'influence des autres variables explicatives sur cette corrélation, ceci est motivé par le fait que, dans le contexte des données traitées, les variables explicatives sont reliées entre elles. [^2]   
+Ces coefficients révèlent finalement de faibles corrélations entre "Financial.Costs..Accumulated.Value" et les autres variables, sauf avec "Interest.Expenses..Accumulated.Value" avec laquelle elle a une corrélation de  0.92. Nous réestimons le modèle avec cette seule variable.
+Le modèle ainsi estimé a un R2 ajusté de 0.9976, ce qui signifie que la variable "Interest.Expenses..Accumulated.Value" a elle seule explique 99% de la variabilité de la variable que l'on cherche à expliquer. De ce fait, nous gardons aussi ce modèle pour les traitements à venir, bien qu'il ait des valeurs d'AIC et d'erreur moyenne supérieures à celle du modèle de base. 
+
+
+```{r modelNonC, results='hide'}
+lmNonC<- update(lm1,.~.-Inventories..Accumulated.Value-Power.Generation..Accumulated.Value)
+sNonC <- summary(lmNonC)
+sNonC
+extractAIC(lmNonC)
+```
+
+```{r corPart}
+cor2pcor(cor(donnees))
+```
+
+
+```{r modelInterest}
+lmInt<- lm(formula=Financial.Costs..Accumulated.Value~Interest.Expenses..Accumulated.Value,data=donnees)
+sInt <- summary(lmInt)
+sInt
+extractAIC(lmInt)
+```
+
+Enfin, nous intronduisons dans le modèle la variable "Total.Profits..Accumulated.Value" dont le coefficient de corrélation partielle est directement inférieur à celui de la variable déja présente dans le modèle, pour voir comment le modèle va évoluer.
+
+L'AIC et l'erreur moyenne diminuent et le R2 ajusté aussi. [^3]
+
+```{r modelInterest2}
+lmInt2<- update(lmInt,.~.+Total.Profits..Accumulated.Value)
+sInt2 <- summary(lmInt2)
+sInt2
+extractAIC(lmInt2)
+```
+[^2]: La relation entendue ici n'est pas nécessairement la corrélation linéaire, mais la relation réelle existant entre ces variables comme étant des indicateurs économiques décrivant la même entité.    
+[^3]: N'ayant su interpréter ce résultat( l'AIC suggérant que la variable devrait être incluse et le R2 ajusté suggérant le contraire ) et celui-ci étant le même pour toute autre variable (exceptée "Administrative.Expenses..Accumulated.Value" ) que l'on introduirait dans le modèle, l'on se propose donc d'arrêter cette démarche, allant ultimement aboutir au modèle de base ( si le critère optimisé est l'AIC).
+
+
+
+
+## Elimination des variables redondantes (sur base du VIF)
+
+Nous essayons désormais d'estimer un meilleur modèle en usant de la mesure VIF des variables.
+Le Variation Inflation Factor (VIF) qui évalue si les facteurs sont corrélés les uns aux autres (présence de multi-colinéarité).
+
+Une directive générale est qu'un VIF supérieur à 5 ou 10 est indicateur d'une multi-colinéarité élevée entre les variables explicatives.
+```{r vif}
+vif(lm1)
+```
+
+La variable présentant la valeur du VIF la plus elevée est "Selling.Expenses..Accumulated.Value" , toutefois, de part sa p-valeur, celle-ci est significative. L'on constate toutefois que la variable "Administrative.Expenses..Accumulated.Value" présente une valeur VIF presque tout aussi elevée et celle-ci est statistiquement non significative, l'on peut donc supposer que ces deux variables sont collinéaire et que toute la variabilité devant etre expliquée par "Administrative.Expenses..Accumulated.Value" est expliquée par "Selling.Expenses..Accumulated.Value". La mesure de la corrélation (dont les résultats sont donnés plus haut) revèle en effet un taux de corrélation de 0.9994890 entre ces deux variables. De ce fait, nous éliminons "Administrative.Expenses..Accumulated.Value" -décision qui concorde avec celle prise au premier modèle- nous retrouvons donc le modèle de base. 
+
+Itérons le processus et voyons maintenant les VIF de celui-ci.
+
+```{r corr}
+# cor = cor(donnees[,c("Administrative.Expenses..Accumulated.Value","Selling.Expenses..Accumulated.Value")])
+# cor
+```
+
+```{r vif1}
+vif(lm2)
+```
+
+Les trois variables "Interest.Expenses..Accumulated.Value", "Total.Profits..Accumulated.Value" et "Selling.Expenses..Accumulated.Value" présentent des valeurs VIF élevées et de même ordre de grandeur. L'on peut constater en effet d'après la mesure de corrélation qu'elles sont fortement corrélées. Nous nous proposons donc de voir les trois modèles ne contenant qu'une variable parmi celles-ci, à la fois et d'en retenir le meilleur.  
+
+Nous constatons toutefois que l'AIC augmente pour les trois modèles.
+
+(Dans ce qui suit, seuls les statistiques globales du modèle et son AIC sont affichés.)
+
+
+**Modèle en ne gardant que "Selling.Expenses..Accumulated.Value"**
+
+
+```{r vif2}
+lm31<- update(lm2,.~.-Interest.Expenses..Accumulated.Value-Total.Profits..Accumulated.Value)
+s31 <- summary(lm31)
+kable(data.frame("standard error" = s31$sigma, s31$df, "R squared"= s31$r.squared, "R squared adjusted"= s31$adj.r.squared, "F-statistic"=s31$fstatistic) , caption = "statistiques globales du modèle réestimé en ne gardant que \"Selling.Expenses..Accumulated.Value\"")%>%
+kable_styling(latex_options=c("hold_position"))
+extractAIC(lm31)
+# vif(lm31)
+```
+
+
+**Modèle en ne gardant que "Interest.Expenses..Accumulated.Value"**
+
+```{r vif3}
+lm32<- update(lm2,.~.-Selling.Expenses..Accumulated.Value-Total.Profits..Accumulated.Value)
+s32 <- summary(lm32)
+kable(data.frame("standard error" = s32$sigma, s32$df, "R squared"= s32$r.squared, "R squared adjusted"= s32$adj.r.squared, "F-statistic"=s32$fstatistic), caption = "statistiques globales du modèle réestimé en ne gardant que \"Interest.Expenses..Accumulated.Value\"")%>%
+kable_styling(latex_options=c("hold_position"))
+extractAIC(lm32)
+# vif(lm32)
+```
+
+
+**Modèle en ne gardant que "Total.Profits..Accumulated.Value"**
+
+```{r vif4}
+lm33<- update(lm2,.~.-Selling.Expenses..Accumulated.Value-Interest.Expenses..Accumulated.Value)
+s33 <- summary(lm33)
+kable( data.frame("standard error" = s33$sigma, s33$df, "R squared"= s33$r.squared, "R squared adjusted"= s33$adj.r.squared, "F-statistic"=s33$fstatistic), caption = "statistiques globales du modèle réestimé en ne gardant que \"Total.Profits..Accumulated.Value\"")%>%
+kable_styling(latex_options=c("hold_position"))
+extractAIC(lm33)
+# vif(lm33)
+```
+
+
+L'on procède dans ce qui suit à la suppression d'une seule variable à la fois parmi ces trois et l'on voit si les modèles obtenus sont meilleurs:
+
+
+**Modèle en éliminant la variable "Selling.Expenses..Accumulated.Value"**
+
+```{r vif5}
+vlm3<- update(lm2,.~.-Selling.Expenses..Accumulated.Value)
+s3 <- summary(vlm3)
+kable( data.frame("standard error" = s3$sigma, s3$df, "R squared"= s3$r.squared, "R squared adjusted"= s3$adj.r.squared, "F-statistic"=s3$fstatistic), caption ="statistiques globales du modèle réestimé en éliminant \"Selling.Expenses..Accumulated.Value\"")%>%
+kable_styling(latex_options=c("hold_position"))
+extractAIC(vlm3)
+# vif(vlm3)
+```
+
+
+Le modèle est moins bon que le modèle de base (sur base de l'AIC).
+
+
+**Modèle en éliminant la variable "Interest.Expenses..Accumulated.Value"**
+
+```{r vif6}
+vlm4<- update(lm2,.~.-Interest.Expenses..Accumulated.Value)
+s4 <- summary(vlm4)
+kable( data.frame("standard error" = s4$sigma, s4$df, "R squared"= s4$r.squared, "R squared adjusted"= s4$adj.r.squared, "F-statistic"=s4$fstatistic), caption ="statistiques globales du modèle réestimé en éliminant \"Interest.Expenses..Accumulated.Value\"")%>%
+kable_styling(latex_options=c("hold_position"))
+extractAIC(vlm4)
+```
+
+
+Le modèle est moins bon que le modèle de base (sur base de l'AIC).
+
+**Modèle en éliminant la variable "Total.Profits..Accumulated.Value"**
+
+```{r vif7}
+vlm5<- update(lm2,.~.-Total.Profits..Accumulated.Value)
+s5 <- summary(vlm5)
+kable(data.frame("standard error" = s5$sigma, s5$df, "R squared"= s5$r.squared, "R squared adjusted"= s5$adj.r.squared, "F-statistic"=s5$fstatistic), caption ="statistiques globales du modèle réestimé en éliminant \"Total.Profits..Accumulated.Value\"")%>%
+kable_styling(latex_options=c("hold_position"))
+extractAIC(vlm5)
+```
+
+
+Idem, Le modèle est moins bon que le modèle de base (sur base de l'AIC).
+
+Les trois modèles ci-dessus desquels les variables de VIF important ont été supprimées une à la fois, ont tous un AIC supérieur à celui du modèle de base. Nous continuons dans ce qui suit l'élimination des variables suivantes, toujours dont le VIF 10, à savoir,"Inventories..Accumulated.Value"  et "Total.Assets..Accumulated.Value".
+
+**Modèle en éliminant la variable "Total.Assets..Accumulated.Value"**
+
+```{r vif8}
+vlm6<- update(lm2,.~.-Total.Assets..Accumulated.Value)
+s6 <- summary(vlm6)
+kable( data.frame("standard error" = s6$sigma, s6$df, "R squared"= s6$r.squared, "R squared adjusted"= s6$adj.r.squared, "F-statistic"=s6$fstatistic), caption ="statistiques globales du modèle réestimé en éliminant \"Total.Assets..Accumulated.Value\"")%>%
+kable_styling(latex_options=c("hold_position"))
+extractAIC(vlm6)
+```
+
+
+**Modèle en éliminant la variable "Inventories..Accumulated.Value"**
+
+```{r vif9}
+vlm7<- update(lm2,.~.-Inventories..Accumulated.Value)
+s7 <- summary(vlm7)
+kable( data.frame("standard error" = s7$sigma, s7$df, "R squared"= s7$r.squared, "R squared adjusted"= s7$adj.r.squared, "F-statistic"=s7$fstatistic), caption ="statistiques globales du modèle réestimé en éliminant \"Inventories..Accumulated.Value\"")%>%
+kable_styling(latex_options=c("hold_position"))
+extractAIC(vlm7)
+```
+
+
+
+On constate que ces deux modèles ont également un AIC supérieur à celui du modèle de base.
+
+Ceci laisse penser que le meilleur modèle est en fait celui obtenu en supprimant uniquement "Administrative.Expenses..Accumulated.Value" qui est le même modèle obtenu avec la fonction "step".
+
+
+---------------------------------
+
+Ci-dessous sont résumées les tentatives d'estimation d'un meilleur modèle que le modèle de base (obtenu en éliminant la seule variable non significative trouvée):
+
+- Elimination des variables sur base des coefficients de corrélations :
+
+	- En éliminant les variables les moins corrélées avec la variable expliquée.
+	- En ne gardant que la variable linéairement fortement corrélée avec la variable expliquée (sur base des coefficients de corrélations partielles) (1)
+	- En introduisant dans le modèle (1) obtenu à l'étape ci-dessus, la variable suivante dont le coefficient de corrélation partielle est directement inférieur à celui de la variable déjà présente dans le modèle.
+
+- Elimination des variables redondantes (selon le VIF):
+            
+  - En supprimant la variable non significative parmi les deux dont le VIF était très élevé (et du même ordre de grandeur).
+  - En ne gardant qu'une des trois variables suivantes de VIF élevés et de même ordre de grandeur.
+  - En supprimant une variable à la foi parmi ces trois et parmi les variables suivantes de VIF >10.
+
+
+Dans tous les cas les modèles obtenus étaient moins bons (en terme d'AIC (mais également en terme d'erreur moyenne)) que le modèle de base.
+Dans les traitements qui suivent nous conservons donc le modèle de base et, comme intentionné plus haut, le modèle (1).
+Nous rappelons que le modèle de base est donné par :
+
+
+  " Financial.Costs..Accumulated.Value ~ Total.Profits..Accumulated.Value + Power.Generation..Accumulated.Value + Inventories..Accumulated.Value + 
+    Total.Assets..Accumulated.Value + Interest.Expenses..Accumulated.Value + Selling.Expenses..Accumulated.Value "
+
+Tel que tous les coefficients sont significatifs et le modèle explique 98% de la variation des couts finaciers.
+
+Et le modèle (1) est celui expliquant la variable dépendente par la seule variable lui étant linéairement fortement corréllée ("Interest.Expenses..Accumulated.Value") expliquant 99% de la variabilité des couts finaciers. Il est donné par: 
+
+  "Financial.Costs..Accumulated.Value ~ Interest.Expenses..Accumulated.Value ".
+
+
+```{r setup2, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message=FALSE, fig.height=4, fig.width=6.5)
+
+```
+
+
+## Vérification des hypothèses sur les résidus 
+
+
+### Graphiques et tests des résidus
+
+#### Modèle de base
+
+```{r resBase}
+Res=residuals(lm2)
+hist(Res,freq=FALSE,nclass=30, col="blue",main="histogramme des résidus du Modèle de Base")
+ 
+# On ajuste la courbe en cloche à l'histogramme pour voir si les résidus peuvent suivre une loi normle
+#
+# x=seq(-3,3,by=0.1)
+# y=dnorm(x,0,1)
+# lines(x,y,type="l",col="red",lwd=2.5)
+
+shapiro.test(Res)
+plot(lm2)
+
+```
+
+
+#### Modèle 1
+
+```{r resMod1}
+
+Res=residuals(lmInt)
+hist(Res,freq=FALSE,nclass=50, col="blue",main="histogramme des résidus du Modèle 1")
+# 
+# On ajute la courbe en cloche à l'histogramme pour voir si les résidus
+# peuvent suivre une loi normle
+#
+# x=seq(-3,3,by=0.1)
+# y=dnorm(x,0,1)
+# lines(x,y,type="l",col="red",lwd=2.5)
+shapiro.test(Res)
+plot(lmInt)
+
+```
+
+
+
+### Normalité
+
+#### Modèle de Base
+
+La p-valeur du test de Shapiro-Wilks sur les résidus observés est de 3.61e-05. L'on peut donc rejeter l'hypothèse nulle selon laquelle les résidus sont normalement distribué. i.e. qu'il est improbable d'obtenir de tels résultats en supposant que les résidus observés soient normalement distribués. 
+Le diagramme Quantile-Quantile montre aussi des résidus non alignés sur la première bissectrice.
+
+ 
+#### Modèle 1
+
+Les mêmes résultats et conclusions peuvent être faits sur les résidus observés du modèle 1.
+
+
+
+### Homoscédasticité
+
+#### Modèle de Base
+
+Le nuage de points des résidus observés en fonction des valeurs prédites présente plus ou moins une distribution conique (des résidus proches de zéro pour des valeurs moindres des prédictions et qui s'éloignent de zéro pour des valeurs supérieures des prédictions) indiquant probablement une hétéroscédasticité des résidus observés (une variance non constante de la variable "résidus").
+Ce graphique et les graphiques "Scale Location" et "Residuals vs Leverage" laissent voir une tendance non linéaire des points, ce qui suggère qu'une certaine variabilité de la variable expliquée n'est pas capturé par le modèle (les variables explicatives) ou que le modèle adéquat n'est pas un modèle linéaire. [^4]
+
+[^4]: Un test d'hétéroscédasticité aurait pu etre opéré.
+
+#### Modèle 1
+
+Les graphiques relatifs au modèle 2 laisse arriver aux même conclusions que pour le modèle de base, avec, cette fois une forme conique et une non linéarité plus prononcées.
+
+
+
+## Points influents
+
+Les traitements qui suivent ont été entrepris dans l'intention de remédier aux résultats trouvés plus en haut (en terme de distribution des résidus). Ceux-ci consistent en l'élimination des points influents du jeu de données, i.e les points sans lesquels le modèle aurait été considérablement différent. La caractérisation de ces points est faite avec la distance de Cook. La distance de Cook de chaque observation est donnée dans l'histogramme suivant duquel les points qui ont des distances s'éloignant significativement de celles des autres observations, sont identifiés comme points influents et supprimés du jeu de données.
+Bien que les modèles réestimés après chaque élimination tendent à avoir une distribution normale des résidus observés (selon le diagramme Q-Q) et des valeurs d'AIC et d'erreur moyenne inférieures ainsi qu'un R2 ajusté supérieur à ceux du modèle de base, ce processus a été arrêté, car suggérait l'élimination d'un nombre important d'observations et bien que non continué, allait probablement suggérer l'élimination des points présentant l'amoncellement à gauche du graphique. Or, la totalité de ces points est ce qui définit l'échantillon et ne sont pas qu'une minorité d'observations.
+Seuls quelques graphiques et modèles réestimés parmi ceux traités sont inclus ci-dessous et le processus n'a été opéré que sur le modèle de base.
+
+
+```{r ab1}
+
+donnees <- na.omit(donneesBrutes)[,-1]                 
+cutoff <- 4/(nrow(donnees)-length(lm2$coefficients)-1) # Distance de Cook, seuil= 4/n-k-1
+plot(lm2,which=4,cook.levels=cutoff, main = "Histogramme des distances de Cook (Modèle de Base)")  #identifier les valeurs D > cutoff
+plot(lm2,which=5,cook.levels=cutoff)
+
+# eliminer ces données influentes
+donnees <- donnees[-which(rownames(donnees) %in% c("43","10","99")),]
+#nrow(donnees)
+
+```
+
+
+Les observations "43","10" et, à moindre degré,"99" sont extremes (en terme de distance de Cook et relativement aux autres observations (puisqu'elles n'ont pas une distance >0.5)) et sont éliminées. Le modèle est réestimé après l'élimination.
+
+(Dans ce qui suit seul l'histogramme des distances est affiché).
+
+
+**Modèle réestimé**
+
+```{r reestim1}
+
+lm6=lm(formula = Financial.Costs..Accumulated.Value ~ Total.Profits..Accumulated.Value + 
+    Power.Generation..Accumulated.Value + Inventories..Accumulated.Value + 
+    Total.Assets..Accumulated.Value + Interest.Expenses..Accumulated.Value + 
+    Selling.Expenses..Accumulated.Value, data = donnees)                        
+s6 <- summary(lm6)
+(shortSummary <- data.frame("standard error" = s6$sigma, s6$df, "R squared"= s6$r.squared, "R squared adjusted"= s6$adj.r.squared, "F-statistic"=s6$fstatistic))
+extractAIC(lm6)
+plot(lm6)
+```
+
+
+On constate que l'AIC et l'erreur moyenne ont diminué. Nous inspectons l'histogramme des distances de Cook du nouveau modèle.
+
+```{r ab2}
+cutoff <- 4/(nrow(donnees)-length(lm6$coefficients)-1) #Cook's D plot, cutoff= 4/n-k-1
+plot(lm6,which=4,cook.levels=cutoff, main = "Histogramme des distances de Cook (Modèle après élimination de 3 observations)")  
+# plot(lm6,which=5,cook.levels=cutoff)
+# eliminer ces données influentes
+
+donnees <- donnees[-which(rownames(donnees) %in% c("54","88","102")),]
+#nrow(donnees)
+```
+
+
+Les observations "54","88","102" sont éliminées et le modèle réestimé.
+
+**Modèle réestimé**
+
+```{r reestim2}
+lm7=lm(formula = Financial.Costs..Accumulated.Value ~ Total.Profits..Accumulated.Value + 
+    Power.Generation..Accumulated.Value + Inventories..Accumulated.Value + 
+    Total.Assets..Accumulated.Value + Interest.Expenses..Accumulated.Value + 
+    Selling.Expenses..Accumulated.Value, data = donnees)
+s7 <- summary(lm7)
+s7
+# s7$coefficients
+# (shortSummary <- data.frame("standard error" = s7$sigma, s7$df, "R squared"= s7$r.squared, "R squared adjusted"= s7$adj.r.squared, "F-statistic"=s7$fstatistic))
+extractAIC(lm7)
+plot(lm7)
+```
+
+
+l'AIC et l'erreur ont baissé et le R2 ajusté a augmenté. Après l'élimination de ces 6 observations les variables  "Power.Generation..Accumulated.Value" et "Total.Assets..Accumulated.Value" sont devenues non significatives, nous réestimons le modèle sans celles-ci et inspectons le nouvel histogramme des distances.
+
+
+```{r ab3}
+cutoff <- 4/(nrow(donnees)-length(lm7$coefficients)-1)
+plot(lm7,which=4,cook.levels=cutoff, main = "Histogramme des distances de Cook (Modèle après élimination de 6 observations)")  
+#plot(lm7,which=5,cook.levels=cutoff)
+# eliminer ces données influentes
+
+donnees <- donnees[-which(rownames(donnees) %in% c("32","66","131")),]
+#nrow(donnees)
+```
+
+
+Les observations "32","66","131" sont éliminées et le modèle réestimé.
+
+
+**Modèle réestimé**
+
+```{r reestim3}
+lm8=lm(formula = Financial.Costs..Accumulated.Value ~ Total.Profits..Accumulated.Value + Inventories..Accumulated.Value + Interest.Expenses..Accumulated.Value + 
+    Selling.Expenses..Accumulated.Value, data = donnees)
+s8 <- summary(lm8)
+#s8
+(shortSummary <- data.frame("standard error" = s8$sigma, s7$df, "R squared"= s8$r.squared, "R squared adjusted"= s8$adj.r.squared, "F-statistic"=s8$fstatistic))
+extractAIC(lm8)
+plot(lm8)
+```
+
+
+L'AIC et l'erreur moyenne ont diminué et le R2 ajusté augmenté.
+
+```{r ab4, results='hide' }
+cutoff <- 4/(nrow(donnees)-length(lm8$coefficients)-1)
+plot(lm8,which=4,cook.levels=cutoff, main = "Histogramme des distances de Cook (Modèle après élimination de 9 observations)") 
+plot(lm8,which=5,cook.levels=cutoff)
+# eliminer ces données influentes
+
+donnees <- donnees[-which(rownames(donnees) %in% c("65","45","46")),]
+#0nrow(donnees)
+```
+<!-- Les observations "65","45","46" sont éliminées. -->
+
+<!-- **Modèle réestimé** -->
+```{r reestim4, results='hide'}
+lm9=lm(formula = Financial.Costs..Accumulated.Value ~ Total.Profits..Accumulated.Value + Inventories..Accumulated.Value + Interest.Expenses..Accumulated.Value + 
+    Selling.Expenses..Accumulated.Value, data = donnees)
+s9 <- summary(lm9)
+#s9
+(shortSummary <- data.frame("standard error" = s9$sigma, s9$df, "R squared"= s9$r.squared, "R squared adjusted"= s9$adj.r.squared, "F-statistic"=s9$fstatistic))
+extractAIC(lm9)
+#plot(lm9)                                                    # results='hide' n'empeche apparemment pas l'affichage des graphiques...
+```
+<!-- Idem, L'AIC et l'erreur moyenne ont baissé et le R2 ajusté augmenté. -->
+
+```{r ab5, results='hide'}
+cutoff <- 4/(nrow(donnees)-length(lm9$coefficients)-1)
+plot(lm9,which=4,cook.levels=cutoff) 
+plot(lm9,which=5,cook.levels=cutoff)
+# eliminer ces données influentes
+donnees <- donnees[-which(rownames(donnees) %in% c("22","77","44")),]
+#○nrow(donnees)
+```
+<!-- "44","25","77" -->
+```{r reestim5, results='hide'}
+lm10=lm(formula = Financial.Costs..Accumulated.Value ~ Total.Profits..Accumulated.Value + Inventories..Accumulated.Value +Interest.Expenses..Accumulated.Value + 
+    Selling.Expenses..Accumulated.Value, data = donnees)
+s10 <- summary(lm10)
+# s10
+(shortSummary <- data.frame("standard error" = s10$sigma, s10$df, "R squared"= s10$r.squared, "R squared adjusted"= s10$adj.r.squared, "F-statistic"=s10$fstatistic))
+extractAIC(lm10)
+# plot(lm10)
+```
+
+```{r ab6, results='hide'}
+cutoff <- 4/(nrow(donnees)-length(lm10$coefficients)-1)
+plot(lm10,which=4,cook.levels=cutoff) 
+plot(lm10,which=5,cook.levels=cutoff)
+# eliminer ces données influentes
+
+donnees <- donnees[-which(rownames(donnees) %in% c("25","24","67")),]
+#nrow(donnees)
+```
+<!-- Les observations "25","24","67" sont éliminées. -->
+
+
+
+
+Après l'élimination de 18 observations et enfin de 21 (et de deux variables), l'on constate que la distribution des résidus reste toujours "problématique". Le processus ne fera que suggérer de supprimer les points des extrémités du diagramme Q-Q et peut-être les points de l'amoncellement sur la gauche des différents graphiques, celui-ci est donc arrêté.
+
+
+**Modèle aprè élimination de 18 observations**
+
+```{r reestim6}
+lm11=lm(formula = Financial.Costs..Accumulated.Value ~ Total.Profits..Accumulated.Value + Inventories..Accumulated.Value + Interest.Expenses..Accumulated.Value + 
+    Selling.Expenses..Accumulated.Value, data = donnees)
+s11 <- summary(lm11)
+# s11
+(shortSummary <- data.frame("standard error" = s11$sigma, s11$df, "R squared"= s11$r.squared, "R squared adjusted"= s11$adj.r.squared, "F-statistic"=s11$fstatistic))
+extractAIC(lm11)
+plot(lm11)
+```
+
+
+**Modèle aprè élimination de 21 observations**
+
+```{r ab7}
+cutoff <- 4/(nrow(donnees)-length(lm11$coefficients)-1)
+
+plot(lm11,which=4,cook.levels=cutoff) 
+plot(lm11,which=5,cook.levels=cutoff)
+
+# eliminer ces données influentes
+
+donnees <- donnees[-which(rownames(donnees) %in% c("47","68","23")),]
+#nrow(donnees)
+```
+
+```{r reestim7}
+lm12=lm(formula = Financial.Costs..Accumulated.Value ~ Total.Profits..Accumulated.Value + 
+    Inventories..Accumulated.Value + Interest.Expenses..Accumulated.Value + 
+    Selling.Expenses..Accumulated.Value, data = donnees)
+s12 <- summary(lm12)
+# s12
+(shortSummary <- data.frame("standard error" = s12$sigma, s12$df, "R squared"= s12$r.squared, "R squared adjusted"= s12$adj.r.squared, "F-statistic"=s12$fstatistic))
+extractAIC(lm12)
+plot(lm12)
+```
+
+
+
+
+
+Il est conclu à cette étape (sur base de ce qui a été opéré dans cette étude) que le modèle obtenu n'est pas un modèle avec lequel l'on s'engagerait à expliquer ou prédir la variable cible, probablement celles-ci n'est pas linéairement modélisable par les variables manipulées ici.
+
+
+
+## Interprétation et prédiction
+
+
+A cette étape le modèle aurait été interprété ( interprétation "métier" de comment les variables retenues expliqueraient la variable dépendente et interprétation quantitative de comment la variation d'une variable influe sur la valeur de la variable expliquée ), et testé sur de nouvelles données pour prédiction [^5].
+
+[^5]: La pratique courante est d' "entrainer" le modèle sur une partie des données et de le tester sur une autre partie de celles-ci. Ceci a été essayé, en adoptant une "validation croisée", toutefois pour ce faire, sous R, il faut utiliser la fonction "train" au lieu de "lm", la manipulation d'un objet retourné par cette première n'ayant pas été aisé, cette initiative a été abandonnée. 
+
